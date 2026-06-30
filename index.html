@@ -173,6 +173,21 @@ tbody tr:hover td{background:var(--bg2)}
   </div>
 </div>
 
+<!-- BANK DETAILS MODAL -->
+<div class="modal-overlay hidden" id="bank-modal">
+  <div class="modal">
+    <h2>One last step</h2>
+    <p>Before your first check-in, please add your bank details. This is saved once and used for all future payments.</p>
+    <div class="modal-form">
+      <input type="text" id="bank-account-number" placeholder="Account Number" inputmode="numeric" autocomplete="off">
+      <input type="text" id="bank-name" placeholder="Bank Name" autocomplete="off">
+      <input type="text" id="bank-warehouse" placeholder="Warehouse" autocomplete="off">
+      <button class="btn primary" onclick="submitBankDetails()" style="width:100%;justify-content:center;padding:10px">Save and check in</button>
+      <p id="bank-error" style="color:var(--red-text);font-size:13px;text-align:center;display:none">Please fill in all fields</p>
+    </div>
+  </div>
+</div>
+
 <header>
   <div class="header-inner">
     <div class="brand">
@@ -309,7 +324,7 @@ tbody tr:hover td{background:var(--bg2)}
       <div class="form-row">
         <div class="form-group"><label class="form-label">Full name</label><input type="text" id="new-name" placeholder="e.g. Chukwuemeka Eze"></div>
         <div class="form-group"><label class="form-label">Grade</label>
-          <select id="new-type"><option value="senior">Senior — ₦9,000/day</option><option value="probation">Probation — ₦6,000/day</option></select>
+          <select id="new-type"><option value="senior">Senior — ₦9,000/day</option><option value="probation">Probation — ₦6,500/day</option></select>
         </div>
       </div>
       <div class="form-row">
@@ -343,7 +358,7 @@ tbody tr:hover td{background:var(--bg2)}
 <div class="toast" id="toast"></div>
 
 <script>
-const SENIOR_PAY=9000,PROBATION_PAY=6000,PROBATION_DAYS=30;
+const SENIOR_PAY=9000,PROBATION_PAY=6500,PROBATION_DAYS=30;
 const SK={W:'wh_workers_v3',C:'wh_checkins_v3',A:'wh_admins_v1',S:'wh_settings_v1'};
 
 let workers=JSON.parse(localStorage.getItem(SK.W)||'null')||[];
@@ -403,12 +418,42 @@ function getCheckinState(wId){
   const t=today();
   return checkins.find(c=>c.workerId===wId&&c.date===t)||null;
 }
+let pendingCheckinWorkerId=null;
 function requestCheckin(id){
   if(getCheckinState(id))return;
+  const w=workers.find(x=>x.id===id);if(!w)return;
+  if(!w.bankAccountNumber||!w.bankName||!w.warehouse){
+    pendingCheckinWorkerId=id;
+    showBankModal();
+    return;
+  }
+  doCheckin(id);
+}
+function doCheckin(id){
   const w=workers.find(x=>x.id===id);if(!w)return;
   const pay=getPay(w),type=getType(w);
   checkins.push({id:Date.now(),workerId:id,workerName:w.name,date:today(),pay,type,status:'pending'});
   save();showToast(w.name+' — check-in submitted, awaiting approval');renderCheckin();updatePendingBadge();
+}
+function showBankModal(){document.getElementById('bank-modal').classList.remove('hidden')}
+function hideBankModal(){document.getElementById('bank-modal').classList.add('hidden');document.getElementById('bank-account-number').value='';document.getElementById('bank-name').value='';document.getElementById('bank-warehouse').value='';document.getElementById('bank-error').style.display='none'}
+function submitBankDetails(){
+  const acc=document.getElementById('bank-account-number').value.trim();
+  const bank=document.getElementById('bank-name').value.trim();
+  const wh=document.getElementById('bank-warehouse').value.trim();
+  if(!acc||!bank||!wh){document.getElementById('bank-error').style.display='block';return}
+  const w=workers.find(x=>x.id===pendingCheckinWorkerId);
+  if(!w){hideBankModal();return}
+  const alreadyHadDetails=!!(w.bankAccountNumber&&w.bankName&&w.warehouse);
+  w.bankAccountNumber=acc;w.bankName=bank;w.warehouse=wh;
+  save();
+  hideBankModal();
+  if(!alreadyHadDetails&&!getCheckinState(pendingCheckinWorkerId)){
+    doCheckin(pendingCheckinWorkerId);
+  }else{
+    renderManage();showToast('Bank details updated for '+w.name);
+  }
+  pendingCheckinWorkerId=null;
 }
 function renderCheckin(){
   const q=(document.getElementById('search-input').value||'').toLowerCase();
@@ -521,13 +566,26 @@ function exportCSV(){
   if(!approved.length){showToast('No approved records to export');return}
   const byWorker={};
   approved.forEach(c=>{
-    if(!byWorker[c.workerName])byWorker[c.workerName]={name:c.workerName,type:c.type,days:0,pay:0};
+    if(!byWorker[c.workerName]){
+      const w=workers.find(x=>x.name===c.workerName);
+      byWorker[c.workerName]={
+        name:c.workerName,type:c.type,days:0,pay:0,
+        accountNumber:w?w.bankAccountNumber||'':'',
+        bankName:w?w.bankName||'':'',
+        warehouse:w?w.warehouse||'':''
+      };
+    }
     byWorker[c.workerName].days++;
     byWorker[c.workerName].pay+=c.pay;
   });
   const rows=Object.values(byWorker).sort((a,b)=>b.pay-a.pay);
   const total=rows.reduce((s,w)=>s+w.pay,0);
-  const csvRows=[['Worker Name','Grade','Days Worked','Total Pay (NGN)'],...rows.map(w=>[w.name,w.type==='probation'?'Probation':'Senior',w.days,w.pay]),[],['TOTAL','','',total]];
+  const csvRows=[
+    ['Worker Name','Grade','Days Worked','Total Pay (NGN)','Account Number','Bank Name','Warehouse'],
+    ...rows.map(w=>[w.name,w.type==='probation'?'Probation':'Senior',w.days,w.pay,w.accountNumber,w.bankName,w.warehouse]),
+    [],
+    ['TOTAL','','',total,'','','']
+  ];
   const csv=csvRows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n');
   const blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8;'});
   const a=Object.assign(document.createElement('a'),{href:URL.createObjectURL(blob),download:'warehouse_payroll_'+today()+'.csv'});
@@ -563,8 +621,17 @@ function renderManage(){
     const start=new Date(w.startDate);
     const daysLeft=Math.max(0,PROBATION_DAYS-Math.floor((new Date()-start)/86400000));
     const meta=type==='probation'?'Started '+w.startDate+' · '+daysLeft+' days until senior':'Started '+w.startDate+' · Senior rate active';
-    return '<div class="worker-card"><div class="worker-left"><div class="avatar '+type+'">'+initials(w.name)+'</div><div><div class="worker-name">'+w.name+'</div><div class="worker-meta">'+meta+'</div></div></div><div class="worker-right"><span class="badge '+type+'">₦'+pay.toLocaleString()+'/day</span><button class="btn danger" onclick="removeWorker('+w.id+')"><i class="ti ti-trash"></i></button></div></div>';
+    const bankInfo=w.bankAccountNumber?(' · '+w.bankName+' '+w.bankAccountNumber+' · '+w.warehouse):' · <span style="color:var(--amber-text)">No bank details yet</span>';
+    return '<div class="worker-card"><div class="worker-left"><div class="avatar '+type+'">'+initials(w.name)+'</div><div><div class="worker-name">'+w.name+'</div><div class="worker-meta">'+meta+bankInfo+'</div></div></div><div class="worker-right"><span class="badge '+type+'">₦'+pay.toLocaleString()+'/day</span><button class="btn" onclick="editBankDetails('+w.id+')"><i class="ti ti-edit"></i></button><button class="btn danger" onclick="removeWorker('+w.id+')"><i class="ti ti-trash"></i></button></div></div>';
   }).join('');
+}
+function editBankDetails(id){
+  const w=workers.find(x=>x.id===id);if(!w)return;
+  pendingCheckinWorkerId=id;
+  document.getElementById('bank-account-number').value=w.bankAccountNumber||'';
+  document.getElementById('bank-name').value=w.bankName||'';
+  document.getElementById('bank-warehouse').value=w.warehouse||'';
+  showBankModal();
 }
 
 // --- ADMINS ---
