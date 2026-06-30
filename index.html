@@ -359,6 +359,7 @@ tbody tr:hover td{background:var(--bg2)}
 
 <script>
 const SENIOR_PAY=9000,PROBATION_PAY=6500,PROBATION_DAYS=30;
+const BANK_DETAILS_START_DATE='2026-07-01';
 const SK={W:'wh_workers_v3',C:'wh_checkins_v3',A:'wh_admins_v1',S:'wh_settings_v1'};
 
 let workers=JSON.parse(localStorage.getItem(SK.W)||'null')||[];
@@ -422,7 +423,8 @@ let pendingCheckinWorkerId=null;
 function requestCheckin(id){
   if(getCheckinState(id))return;
   const w=workers.find(x=>x.id===id);if(!w)return;
-  if(!w.bankAccountNumber||!w.bankName||!w.warehouse){
+  const bankFeatureActive=today()>=BANK_DETAILS_START_DATE;
+  if(bankFeatureActive&&(!w.bankAccountNumber||!w.bankName||!w.warehouse)){
     pendingCheckinWorkerId=id;
     showBankModal();
     return;
