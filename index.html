@@ -229,10 +229,17 @@ tbody tr:hover td{background:var(--bg2)}
     <div class="toolbar">
       <div><div style="font-size:12px;color:var(--text2);margin-bottom:4px">From</div><input type="date" class="date-input" id="filter-from" onchange="renderLedger()"></div>
       <div><div style="font-size:12px;color:var(--text2);margin-bottom:4px">To</div><input type="date" class="date-input" id="filter-to" onchange="renderLedger()"></div>
+      <div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:4px">View</div>
+        <div style="display:flex;border:0.5px solid var(--border2);border-radius:var(--radius);overflow:hidden">
+          <button class="btn" id="view-summary-btn" onclick="setLedgerView('summary')" style="border:none;border-radius:0">Summary (per worker)</button>
+          <button class="btn" id="view-daily-btn" onclick="setLedgerView('daily')" style="border:none;border-radius:0;border-left:0.5px solid var(--border2)">Daily log</button>
+        </div>
+      </div>
     </div>
     <div class="log-wrap">
       <table>
-        <thead><tr><th>Worker</th><th>Date</th><th>Grade</th><th>Status</th><th style="text-align:right">Pay (₦)</th></tr></thead>
+        <thead id="ledger-head"></thead>
         <tbody id="ledger-body"></tbody>
       </table>
     </div>
@@ -302,7 +309,7 @@ tbody tr:hover td{background:var(--bg2)}
       <div class="form-row">
         <div class="form-group"><label class="form-label">Full name</label><input type="text" id="new-name" placeholder="e.g. Chukwuemeka Eze"></div>
         <div class="form-group"><label class="form-label">Grade</label>
-          <select id="new-type"><option value="senior">Senior — ₦9,000/day</option><option value="probation">Probation — ₦6,500/day</option></select>
+          <select id="new-type"><option value="senior">Senior — ₦9,000/day</option><option value="probation">Probation — ₦6,000/day</option></select>
         </div>
       </div>
       <div class="form-row">
@@ -336,7 +343,7 @@ tbody tr:hover td{background:var(--bg2)}
 <div class="toast" id="toast"></div>
 
 <script>
-const SENIOR_PAY=9000,PROBATION_PAY=6500,PROBATION_DAYS=30;
+const SENIOR_PAY=9000,PROBATION_PAY=6000,PROBATION_DAYS=30;
 const SK={W:'wh_workers_v3',C:'wh_checkins_v3',A:'wh_admins_v1',S:'wh_settings_v1'};
 
 let workers=JSON.parse(localStorage.getItem(SK.W)||'null')||[];
@@ -455,36 +462,73 @@ function renderApprovals(){
 }
 
 // --- LEDGER ---
-function renderLedger(){
+let ledgerView='summary';
+function setLedgerView(v){
+  ledgerView=v;
+  document.getElementById('view-summary-btn').style.background=v==='summary'?'var(--bg2)':'var(--bg)';
+  document.getElementById('view-summary-btn').style.fontWeight=v==='summary'?'600':'500';
+  document.getElementById('view-daily-btn').style.background=v==='daily'?'var(--bg2)':'var(--bg)';
+  document.getElementById('view-daily-btn').style.fontWeight=v==='daily'?'600':'500';
+  renderLedger();
+}
+function getFilteredApproved(){
   const from=document.getElementById('filter-from').value;
   const to=document.getElementById('filter-to').value;
-  let data=[...checkins].sort((a,b)=>b.date.localeCompare(a.date));
+  let data=checkins.filter(c=>c.status==='approved');
   if(from)data=data.filter(c=>c.date>=from);
   if(to)data=data.filter(c=>c.date<=to);
-  const approved=data.filter(c=>c.status==='approved');
+  return data;
+}
+function renderLedger(){
+  const approved=getFilteredApproved();
   const total=approved.reduce((s,c)=>s+c.pay,0);
   const days=new Set(approved.map(c=>c.date)).size;
-  const avg=days>0?Math.round(total/days):0;
+  const workersCount=new Set(approved.map(c=>c.workerName)).size;
   document.getElementById('ledger-stats').innerHTML=
-    '<div class="stat-card"><div class="stat-label">Records shown</div><div class="stat-value">'+data.length+'</div></div>'+
-    '<div class="stat-card"><div class="stat-label">Total approved pay (₦)</div><div class="stat-value">'+total.toLocaleString()+'</div></div>'+
-    '<div class="stat-card"><div class="stat-label">Avg daily pay (₦)</div><div class="stat-value">'+avg.toLocaleString()+'</div></div>';
+    '<div class="stat-card"><div class="stat-label">Workers paid</div><div class="stat-value">'+workersCount+'</div></div>'+
+    '<div class="stat-card"><div class="stat-label">Total pay (₦)</div><div class="stat-value">'+total.toLocaleString()+'</div></div>'+
+    '<div class="stat-card"><div class="stat-label">Days covered</div><div class="stat-value">'+days+'</div></div>';
+
+  if(ledgerView==='summary'){renderLedgerSummary(approved,total)}
+  else{renderLedgerDaily(approved,total)}
+}
+function renderLedgerSummary(approved,total){
+  document.getElementById('ledger-head').innerHTML='<tr><th>Worker</th><th>Grade</th><th style="text-align:center">Days worked</th><th style="text-align:right">Total pay (₦)</th></tr>';
   const tbody=document.getElementById('ledger-body');
-  if(!data.length){tbody.innerHTML='<tr><td colspan="5"><div class="empty-state"><i class="ti ti-calendar-off"></i>No records in this range</div></td></tr>';return}
-  tbody.innerHTML=data.map(c=>'<tr><td>'+c.workerName+'</td><td>'+c.date+'</td><td><span class="badge '+c.type+'">'+(c.type==='probation'?'Probation':'Senior')+'</span></td><td><span class="badge '+(c.status==='approved'?'approved':c.status==='pending'?'pending':'')+(c.status==='rejected'?'" style="background:var(--red-bg);color:var(--red-text);border:0.5px solid var(--red-border)':'')+'">'+c.status.charAt(0).toUpperCase()+c.status.slice(1)+'</span></td><td class="pay-cell">'+(c.status==='approved'?'₦'+c.pay.toLocaleString():'—')+'</td></tr>').join('')
-  +'<tr style="background:var(--bg2)"><td colspan="4" style="font-weight:600;padding:12px 14px">Total (approved)</td><td class="pay-cell">₦'+total.toLocaleString()+'</td></tr>';
+  if(!approved.length){tbody.innerHTML='<tr><td colspan="4"><div class="empty-state"><i class="ti ti-calendar-off"></i>No approved records in this range</div></td></tr>';return}
+  const byWorker={};
+  approved.forEach(c=>{
+    if(!byWorker[c.workerName])byWorker[c.workerName]={name:c.workerName,type:c.type,days:0,pay:0};
+    byWorker[c.workerName].days++;
+    byWorker[c.workerName].pay+=c.pay;
+  });
+  const rows=Object.values(byWorker).sort((a,b)=>b.pay-a.pay);
+  tbody.innerHTML=rows.map(w=>'<tr><td>'+w.name+'</td><td><span class="badge '+w.type+'">'+(w.type==='probation'?'Probation':'Senior')+'</span></td><td style="text-align:center">'+w.days+'</td><td class="pay-cell">₦'+w.pay.toLocaleString()+'</td></tr>').join('')
+  +'<tr style="background:var(--bg2)"><td colspan="3" style="font-weight:600;padding:12px 14px">Total</td><td class="pay-cell">₦'+total.toLocaleString()+'</td></tr>';
+}
+function renderLedgerDaily(approved,total){
+  document.getElementById('ledger-head').innerHTML='<tr><th>Worker</th><th>Date</th><th>Grade</th><th style="text-align:right">Pay (₦)</th></tr>';
+  const tbody=document.getElementById('ledger-body');
+  const data=[...approved].sort((a,b)=>b.date.localeCompare(a.date));
+  if(!data.length){tbody.innerHTML='<tr><td colspan="4"><div class="empty-state"><i class="ti ti-calendar-off"></i>No approved records in this range</div></td></tr>';return}
+  tbody.innerHTML=data.map(c=>'<tr><td>'+c.workerName+'</td><td>'+c.date+'</td><td><span class="badge '+c.type+'">'+(c.type==='probation'?'Probation':'Senior')+'</span></td><td class="pay-cell">₦'+c.pay.toLocaleString()+'</td></tr>').join('')
+  +'<tr style="background:var(--bg2)"><td colspan="3" style="font-weight:600;padding:12px 14px">Total</td><td class="pay-cell">₦'+total.toLocaleString()+'</td></tr>';
 }
 
 // --- EXPORT CSV ---
 function exportCSV(){
-  const from=document.getElementById('filter-from').value;
-  const to=document.getElementById('filter-to').value;
-  let data=[...checkins].sort((a,b)=>b.date.localeCompare(a.date));
-  if(from)data=data.filter(c=>c.date>=from);
-  if(to)data=data.filter(c=>c.date<=to);
-  const total=data.filter(c=>c.status==='approved').reduce((s,c)=>s+c.pay,0);
-  const rows=[['Worker Name','Date','Grade','Status','Pay (NGN)'],...data.map(c=>[c.workerName,c.date,c.type==='probation'?'Probation':'Senior',c.status,c.status==='approved'?c.pay:0]),[],['TOTAL APPROVED','','','',total]];
-  const csv=rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n');
+  const approved=getFilteredApproved();
+  if(!approved.length){showToast('No approved records to export');return}
+  const byWorker={};
+  approved.forEach(c=>{
+    if(!byWorker[c.workerName])byWorker[c.workerName]={name:c.workerName,type:c.type,days:0,pay:0};
+    byWorker[c.workerName].days++;
+    byWorker[c.workerName].pay+=c.pay;
+  });
+  const rows=Object.values(byWorker).sort((a,b)=>b.pay-a.pay);
+  const total=rows.reduce((s,w)=>s+w.pay,0);
+  const csvRows=[['Worker Name','Grade','Days Worked','Total Pay (NGN)'],...rows.map(w=>[w.name,w.type==='probation'?'Probation':'Senior',w.days,w.pay]),[],['TOTAL','','',total]];
+  const csv=csvRows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n');
   const blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8;'});
   const a=Object.assign(document.createElement('a'),{href:URL.createObjectURL(blob),download:'warehouse_payroll_'+today()+'.csv'});
   a.click();URL.revokeObjectURL(a.href);showToast('CSV downloaded');
