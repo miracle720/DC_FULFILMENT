@@ -233,7 +233,17 @@ tbody tr:hover td{background:var(--bg2)}
   <!-- APPROVALS TAB (admin only) -->
   <div id="tab-approve" class="section">
     <div class="stat-grid" id="approve-stats"></div>
-    <p class="section-title">Pending check-ins — approve or reject</p>
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px">
+      <div style="display:flex;gap:8px">
+        <div style="display:flex;border:0.5px solid var(--border2);border-radius:var(--radius);overflow:hidden">
+          <button class="btn" id="approve-filter-today" onclick="setApproveFilter('today')" style="border:none;border-radius:0">Today</button>
+          <button class="btn" id="approve-filter-week" onclick="setApproveFilter('week')" style="border:none;border-radius:0;border-left:0.5px solid var(--border2)">This week</button>
+          <button class="btn" id="approve-filter-all" onclick="setApproveFilter('all')" style="border:none;border-radius:0;border-left:0.5px solid var(--border2)">All pending</button>
+        </div>
+      </div>
+      <button class="btn success" onclick="approveAll()"><i class="ti ti-checks"></i> Approve all</button>
+    </div>
+    <p class="section-title" id="approve-section-title">Pending check-ins — approve or reject individually</p>
     <div class="worker-list" id="approve-list"></div>
   </div>
 
@@ -349,6 +359,19 @@ tbody tr:hover td{background:var(--bg2)}
         <div class="form-group" style="justify-content:flex-end"><label class="form-label">&nbsp;</label><button class="btn primary" onclick="addAdmin()"><i class="ti ti-plus"></i> Add admin</button></div>
       </div>
     </div>
+    <p class="section-title">Change password</p>
+    <div class="card">
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Select admin</label>
+          <select id="change-pw-admin"></select>
+        </div>
+        <div class="form-group"><label class="form-label">New password</label><input type="password" id="change-pw-new" placeholder="Enter new password"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Confirm password</label><input type="password" id="change-pw-confirm" placeholder="Re-enter new password"></div>
+        <div class="form-group" style="justify-content:flex-end"><label class="form-label">&nbsp;</label><button class="btn primary" onclick="changePassword()"><i class="ti ti-key"></i> Change password</button></div>
+      </div>
+    </div>
     <p class="section-title">Current admins</p>
     <div class="worker-list" id="admin-list"></div>
   </div>
@@ -359,7 +382,7 @@ tbody tr:hover td{background:var(--bg2)}
 
 <script>
 const SENIOR_PAY=9000,PROBATION_PAY=6500,PROBATION_DAYS=30;
-const BANK_DETAILS_START_DATE='2026-07-01';
+const BANK_DETAILS_START_DATE='2099-01-01';
 const SK={W:'wh_workers_v3',C:'wh_checkins_v3',A:'wh_admins_v1',S:'wh_settings_v1'};
 
 let workers=JSON.parse(localStorage.getItem(SK.W)||'null')||[];
@@ -495,17 +518,54 @@ function updatePendingBadge(){
 }
 function approveCI(id){const c=checkins.find(x=>x.id===id);if(c){c.status='approved';save();renderApprovals();renderCheckin();updatePendingBadge();showToast(c.workerName+' approved')}}
 function rejectCI(id){const c=checkins.find(x=>x.id===id);if(c){c.status='rejected';save();renderApprovals();renderCheckin();updatePendingBadge();showToast(c.workerName+' rejected')}}
+
+let approveFilter='today';
+function setApproveFilter(f){
+  approveFilter=f;
+  ['today','week','all'].forEach(k=>{
+    const el=document.getElementById('approve-filter-'+k);
+    el.style.background=f===k?'var(--bg2)':'var(--bg)';
+    el.style.fontWeight=f===k?'600':'500';
+  });
+  renderApprovals();
+}
+function getApproveFilteredPending(){
+  const all=checkins.filter(c=>c.status==='pending');
+  if(approveFilter==='today') return all.filter(c=>c.date===today());
+  if(approveFilter==='week'){
+    const now=new Date();
+    const monday=new Date(now);monday.setDate(now.getDate()-((now.getDay()+6)%7));
+    const from=monday.toISOString().split('T')[0];
+    return all.filter(c=>c.date>=from&&c.date<=today());
+  }
+  return all;
+}
+function approveAll(){
+  const pending=getApproveFilteredPending();
+  if(!pending.length){showToast('No pending check-ins to approve');return}
+  pending.forEach(c=>c.status='approved');
+  save();renderApprovals();renderCheckin();updatePendingBadge();
+  showToast('✓ '+pending.length+' check-in'+(pending.length>1?'s':'')+' approved');
+}
 function renderApprovals(){
-  const pending=checkins.filter(c=>c.status==='pending').sort((a,b)=>b.date.localeCompare(a.date));
+  const pending=getApproveFilteredPending().sort((a,b)=>b.date.localeCompare(a.date));
   const todayP=checkins.filter(c=>c.date===today()&&c.status==='pending').length;
   const todayA=checkins.filter(c=>c.date===today()&&c.status==='approved').length;
+  const totalP=checkins.filter(c=>c.status==='pending').length;
   document.getElementById('approve-stats').innerHTML=
-    '<div class="stat-card"><div class="stat-label">Pending</div><div class="stat-value">'+todayP+'</div></div>'+
+    '<div class="stat-card"><div class="stat-label">Pending today</div><div class="stat-value">'+todayP+'</div></div>'+
     '<div class="stat-card"><div class="stat-label">Approved today</div><div class="stat-value">'+todayA+'</div></div>'+
-    '<div class="stat-card"><div class="stat-label">Total pending</div><div class="stat-value">'+pending.length+'</div></div>';
+    '<div class="stat-card"><div class="stat-label">All pending</div><div class="stat-value">'+totalP+'</div></div>';
+  const filterLabel={'today':'today','week':'this week','all':'all time'};
+  document.getElementById('approve-section-title').textContent='Pending ('+filterLabel[approveFilter]+') — approve all or reject individually';
   const list=document.getElementById('approve-list');
-  if(!pending.length){list.innerHTML='<div class="empty-state"><i class="ti ti-circle-check"></i>No pending check-ins</div>';return}
-  list.innerHTML=pending.map(c=>'<div class="worker-card"><div class="worker-left"><div class="avatar '+c.type+'">'+initials(c.workerName)+'</div><div><div class="worker-name">'+c.workerName+'</div><div class="worker-meta">'+c.date+' · ₦'+c.pay.toLocaleString()+'/day · '+(c.type==='probation'?'Probation':'Senior')+'</div></div></div><div class="worker-right"><button class="btn success" onclick="approveCI('+c.id+')"><i class="ti ti-check"></i> Approve</button><button class="btn danger" onclick="rejectCI('+c.id+')"><i class="ti ti-x"></i> Reject</button></div></div>').join('');
+  if(!pending.length){list.innerHTML='<div class="empty-state"><i class="ti ti-circle-check"></i>No pending check-ins for this period</div>';return}
+  list.innerHTML=pending.map(c=>'<div class="worker-card"><div class="worker-left"><div class="avatar '+c.type+'">'+initials(c.workerName)+'</div><div><div class="worker-name">'+c.workerName+'</div><div class="worker-meta">'+c.date+' · ₦'+c.pay.toLocaleString()+' · '+(c.type==='probation'?'Probation':'Senior')+'</div></div></div><div class="worker-right"><button class="btn success" onclick="approveCI('+c.id+')"><i class="ti ti-check"></i> Approve</button><button class="btn danger" onclick="rejectCI('+c.id+')"><i class="ti ti-x"></i> Reject</button></div></div>').join('');
+  // set filter button styles on first render
+  ['today','week','all'].forEach(k=>{
+    const el=document.getElementById('approve-filter-'+k);
+    if(el){el.style.background=approveFilter===k?'var(--bg2)':'var(--bg)';el.style.fontWeight=approveFilter===k?'600':'500';}
+  });
 }
 
 // --- LEDGER ---
@@ -654,9 +714,25 @@ function removeAdmin(id){
   if(!confirm('Remove admin: '+a.role+'?'))return;
   admins=admins.filter(x=>x.id!==id);save();renderAdmins();showToast('Admin removed');
 }
+function changePassword(){
+  const sel=document.getElementById('change-pw-admin');
+  const id=parseInt(sel.value);
+  const np=document.getElementById('change-pw-new').value;
+  const cp=document.getElementById('change-pw-confirm').value;
+  if(!np){showToast('Enter a new password');return}
+  if(np!==cp){showToast('Passwords do not match');return}
+  if(np.length<4){showToast('Password must be at least 4 characters');return}
+  const a=admins.find(x=>x.id===id);if(!a)return;
+  a.password=np;save();
+  document.getElementById('change-pw-new').value='';
+  document.getElementById('change-pw-confirm').value='';
+  showToast('Password updated for '+a.role);
+}
 function renderAdmins(){
   const list=document.getElementById('admin-list');
   list.innerHTML=admins.map(a=>'<div class="worker-card"><div class="worker-left"><div class="avatar senior">'+initials(a.role)+'</div><div><div class="worker-name">'+a.role+'</div><div class="worker-meta">@'+a.username+(a.id===currentAdmin?.id?' · You':'')+'</div></div></div><div class="worker-right">'+(a.id!==currentAdmin?.id?'<button class="btn danger" onclick="removeAdmin('+a.id+')"><i class="ti ti-trash"></i></button>':'<span class="badge approved">Active</span>')+'</div></div>').join('');
+  const sel=document.getElementById('change-pw-admin');
+  if(sel)sel.innerHTML=admins.map(a=>'<option value="'+a.id+'">'+a.role+' (@'+a.username+')</option>').join('');
 }
 
 // --- GOOGLE SHEETS SYNC ---
